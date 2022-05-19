@@ -1,0 +1,270 @@
+---
+title: "R Notebook"
+fig.width: 11
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+fig.height: 9
+---
+
+```{r global-options, include=FALSE}
+library(knitr)
+opts_chunk$set(fig.width=11, fig.height=9,
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(TCGAbiolinks)
+library(stringr)
+#library(ggprism)
+
+outputDir <- "../../results/tumor_break_load/"
+dir.create(outputDir)
+```
+
+
+```{r}
+# read genomic metrics ROI
+genomic_metrics <- read.csv("../../results/sample_genome_metrics.csv", header = T, row.names = 1)
+tumor_break_load <- read.csv("../../results/SNP6/masked_copy_number_segment/primary_tumor/tumor_break_load.csv")
+
+# remove outlier sample with all low genomic measures
+genomic_metrics <- genomic_metrics[genomic_metrics$barcode != "TCGA-AH-6547",]
+tumor_break_load <- tumor_break_load[tumor_break_load$barcode != "TCGA-AH-6547",]
+```
+
+```{r}
+print(summary(tumor_break_load$count))
+sd(tumor_break_load$count)
+mad(tumor_break_load$count)
+IQR(tumor_break_load$count)
+print(summary(genomic_metrics$TMB))
+print(summary(genomic_metrics$aneuploidy_score))
+```
+```{r}
+pdf(paste(outputDir, "break_sample_ranking.pdf", sep=""))
+plt <- genomic_metrics %>% ggplot(aes(x = reorder(sample_ids, count), y = count)) + 
+  geom_segment(y = median(genomic_metrics$count), yend = median(genomic_metrics$count), 
+               x = 150, xend = 300, linetype="dashed", size = 1.5, color = "grey") + 
+  geom_point() + xlab("samples") + ylab("# unbalanced chromosomal breaks") + 
+  theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) 
+plt
+dev.off()
+plt
+```
+
+
+```{r}
+# Tumor break load distribution
+pdf(paste(outputDir, "TBL_dist_COADREAD.pdf", sep=""))
+plt <- ggplot(tumor_break_load, aes(x=count)) + 
+  geom_histogram(aes(y=..density..), binwidth = 5, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="#31a354") + xlab("Tumor Break Load (TBL)") +
+  scale_x_continuous(expand = c(0,0)) + scale_y_continuous(expand = c(0,0)) + 
+  theme_classic(base_size=21)
+plt
+dev.off()
+plt
+```
+
+```{r}
+# Tumor Mutational Burden distribution
+pdf(paste(outputDir, "TMB_distribution_log.pdf", sep=""))
+plt <- ggplot(genomic_metrics, aes(x=log10(TMB+1))) + 
+  geom_histogram(aes(y=..density..), binwidth = 0.1, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="red") + xlab("Tumor Mutational Burden log10(TMB)") + 
+  scale_x_continuous(expand = c(0,0)) + scale_y_continuous(expand = c(0,0)) +
+  theme_classic(base_size=21)
+plt
+dev.off()
+plt
+```
+
+```{r}
+# aneuploidy score distribution
+pdf(paste(outputDir, "CAA_dist_COADREAD.pdf", sep=""))
+plt <- ggplot(genomic_metrics, aes(x=aneuploidy_score)) + 
+  geom_histogram(aes(y=..density..), binwidth = 1, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="lightblue") + xlab("Chromosomal Arm Aneuploidy score (CAA)") +
+  scale_x_continuous(expand = c(0,0)) + scale_y_continuous(expand = c(0,0)) +
+  theme_classic(base_size=21)
+plt
+dev.off()
+plt
+```
+
+```{r}
+# fraction genome altered distribution
+pdf(paste(outputDir, "fraction_genome_altered_dist.pdf", sep=""))
+plt <- ggplot(genomic_metrics, aes(x=fraction_abr)) + 
+  geom_histogram(aes(y=..density..), binwidth = 0.02, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="purple") + xlab("Fraction genome altered") +
+  scale_x_continuous(expand = c(0,0)) + scale_y_continuous(expand = c(0,0)) +
+  theme_classic(base_size=21)
+plt
+dev.off()
+plt
+```
+
+```{r}
+# annotate MSI and pole as one variable
+genomic_metrics$msi_pole <- as.character(genomic_metrics$msi_status)
+genomic_metrics[which(genomic_metrics$msi_pole %in% c("MSI-L", "Indeterminate")), "msi_pole"] <- "MSS"
+genomic_metrics[is.na(genomic_metrics$msi_pole), "msi_pole"] <- "-"
+genomic_metrics[which((genomic_metrics$POLE_mut == T | genomic_metrics$POLD1_mut == T) & genomic_metrics$msi_pole != "MSI-H"), "msi_pole"] <- "POLE/D1"
+genomic_metrics$msi_pole <- as.factor(genomic_metrics$msi_pole)
+```
+
+```{r}
+pdf(paste(outputDir, "frac_genome_tmb_plot.pdf", sep=""))
+plt <- ggplot(genomic_metrics[genomic_metrics$msi_pole != "-",], aes(x = fraction_abr, y = log10(TMB+1), color = msi_pole)) + 
+  geom_point() + xlab("Fraction genome altered") + ylab("Tumor Mutational Burden (log10(TMB))") + 
+  theme_classic(base_size=21) + labs(color = "")
+plt
+dev.off()
+plt
+```
+
+```{r}
+pdf(paste(outputDir, "CAA_tmb_plot.pdf", sep=""))
+plt <- ggplot(genomic_metrics[genomic_metrics$msi_pole != "-",], aes(x = aneuploidy_score, y = log10(TMB+1), color = msi_pole)) + 
+  geom_point() + xlab("Chromosomal Arm Aneuploidy score (CAA)") + ylab("Tumor Mutational Burden (log10(TMB))") + 
+  theme_classic(base_size=21) + labs(color = "")
+plt
+dev.off()
+plt
+```
+
+```{r}
+pdf(paste(outputDir, "TBL_TMB_plot.pdf", sep=""))
+plt <- ggplot(genomic_metrics[genomic_metrics$msi_pole != "-",], aes(x = count, y = log10(TMB+1), color = msi_pole)) + 
+  geom_point() + xlab("Tumor Break Load (TBL)") + ylab("Tumor Mutational Burden (log10(TMB))") + 
+  theme_classic(base_size=21) + labs(color = "") + theme( legend.position = "top")
+plt
+dev.off()
+plt
+```
+
+
+```{r}
+pdf(paste(outputDir, "TBL_CAA_plot.pdf", sep= ""))
+plt <- ggplot(genomic_metrics[genomic_metrics$msi_pole != "-",], aes(x = count, y = aneuploidy_score, color = msi_pole)) + 
+  geom_point() + xlab("Tumor Break Load (TBL)") + ylab("Chromosomal Arm Aneuploidy score (CAA)") + 
+  theme_classic(base_size=21) + labs(color = "")
+plt
+dev.off()
+plt
+```
+
+```{r}
+pdf(paste(outputDir, "Fraction_TBL_plot.pdf", sep=""))
+plt <- ggplot(genomic_metrics[genomic_metrics$msi_pole != "-",], aes(x = count, y = fraction_abr, color = msi_pole)) + 
+  geom_point() + xlab("Tumor Break Load (TBL)") + ylab("Fraction Genome Altered") + 
+  theme_classic(base_size=21) + labs(color = "")
+plt
+dev.off()
+plt
+```
+
+# Remove MSI and POLE/D1 samples
+Remove also samples with no annotation
+
+```{r}
+genomic_filtered <- genomic_metrics[genomic_metrics$msi_pole == "MSS" & genomic_metrics$TMB <= 300,]
+
+pdf(paste(outputDir, "MSS_TMB_TBL_plot.pdf", sep=""))
+plt <- ggplot(genomic_filtered, aes(x = count, y = TMB)) + 
+  geom_point() + geom_density_2d(color = "darkred") + xlab("Tumor Break Load (TBL)") + 
+  ylab("Tumor Mutational Burden (TMB)") + theme_classic(base_size=21) + 
+  stat_cor(aes(label = ..rr.label..), label.x = 250, size = 6) + theme(axis.text = element_text(size = 12),
+                                                                        axis.title = element_text(size = 14)) +
+  theme_classic(base_size=21)
+plt
+dev.off()
+plt
+png(paste(outputDir, "MSS_TMB_TBL_plot.png", sep=""), width = 400, height = 400)
+plt
+dev.off()
+
+```
+
+```{r}
+pdf(paste(outputDir, "MSS_TMB_TBL_plot_pvalue.pdf", sep=""))
+plt <- ggplot(genomic_filtered, aes(x = count, y = TMB)) + 
+  geom_point() + geom_density_2d(color = "darkred") + xlab("Tumor Break Load (TBL)") + ylab("Tumor Mutational Burden (TMB)") + theme_classic(base_size=21) + 
+  stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")), label.x = 170, size = 6) + theme(axis.text = element_text(size = 12),
+                                                                        axis.title = element_text(size = 14)) +
+  theme_classic(base_size=21)
+plt
+dev.off()
+plt
+png(paste(outputDir, "MSS_TMB_TBL_plot.png", sep=""), width = 400, height = 400)
+plt
+dev.off()
+```
+
+```{r}
+# Tumor break load distribution
+pdf(paste(outputDir, "MSS_TBL_dist_COADREAD.pdf", sep=""))
+plt <- ggplot(genomic_filtered, aes(x=count)) + 
+  geom_histogram(aes(y=..density..), binwidth = 5, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="#31a354") + xlab("Tumor Break Load (TBL)") + 
+  theme_minimal(base_size = 18)
+plt
+dev.off()
+plt
+```
+
+```{r}
+pdf(paste(outputDir, "MSS_CAA_TBL_plot.pdf", sep=""))
+plt <- ggplot(genomic_filtered, aes(x = count, y = aneuploidy_score)) + 
+  geom_point() + geom_density_2d(color = "darkblue") + xlab("Tumor Break Load (TBL)") + ylab("Chromosomal Arm Aneuploidy Score (CAA)") + theme_classic(base_size=21) + 
+  stat_cor(aes(label = ..rr.label..), label.x = 220, size = 5) + theme(axis.text = element_text(size = 12),
+                                                             axis.title = element_text(size = 14))
+plt
+dev.off()
+plt
+png(paste(outputDir, "MSS_CAA_TBL_plot.png", sep=""), width = 400, height = 400)
+plt
+dev.off()
+```
+
+```{r}
+pdf(paste(outputDir, "MSS_Fraction_TBL_plot.pdf", sep=""))
+plt <- ggplot(genomic_filtered, aes(x = count, y = fraction_abr)) + 
+  geom_point() + geom_density_2d(color = "darkgreen") + xlab("Tumor Break Load (TBL)") + ylab("Fraction Genome Altered (FGA)") + 
+  theme_classic(base_size=21) +
+  stat_cor(aes(label = ..rr.label..), label.x = 250, size = 6) + theme(axis.text = element_text(size = 12),
+                                                             axis.title = element_text(size = 14)) +
+  theme_classic(base_size=21)
+plt
+dev.off()
+plt
+png(paste(outputDir, "MSS_Fraction_TBL_plot.png", sep = ""), width = 400, height = 400)
+plt
+dev.off()
+```
+
+```{r}
+pdf(paste(outputDir, "MSS_Fraction_TBL_plot_pvalue.pdf", sep=""))
+plt <- ggplot(genomic_filtered, aes(x = count, y = fraction_abr)) + 
+  geom_point() + geom_density_2d(color = "darkred") + xlab("Tumor Break Load (TBL)") + ylab("Fraction Genome Altered (FGA)") + theme_classic(base_size=21) + 
+  stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")), label.x = 170, size = 6) + theme(axis.text = element_text(size = 12),
+                                                                        axis.title = element_text(size = 14)) +
+  theme_classic(base_size=21)
+plt
+dev.off()
+plt
+png(paste(outputDir, "MSS_TMB_TBL_plot_pvalue.png", sep=""), width = 400, height = 400)
+plt
+dev.off()
+```
+
+```{r}
+write.csv(genomic_filtered, "../../results/genomic_metrics_MSS_stage_1_4.csv")
+```
+

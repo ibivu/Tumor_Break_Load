@@ -1,0 +1,220 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, echo=FALSE, message=FALSE}
+# Read libraries
+library(pheatmap)
+library(ggplot2)
+library(RColorBrewer)
+library(reshape2)
+library(gridExtra)
+library(GenomicRanges)
+library(ggbio)
+source("cnd_functions.R")
+library(ggthemes)
+library(dplyr)
+library(ggprism)
+```
+
+```{r}
+# analysis for masked data
+outputdirTumor <- "../../results/SNP6/masked_copy_number_segment/primary_tumor/plots" # output location results tumor data
+outputdirNormal <- "../../results/SNP6/masked_copy_number_segment/normals/plots" # output location results normal data
+
+# create directories
+dir.create(outputdirTumor, recursive = T)
+dir.create(outputdirNormal, recursive = T)
+
+# Set the directories for which you want to load the segments
+tumor_workdir <- '../../data/SNP6/masked_copy_number_segment/primary_tumor/data'
+
+normal_workdir <- '../../data/SNP6/masked_copy_number_segment/normals/data'
+
+# Load segment files combined in one data frame
+tumor_segs <- load_segment_files(tumor_workdir)
+normal_segs <- load_segment_files(normal_workdir)
+
+# read metadata
+tumor_metadata <- read.csv("../../data/SNP6/masked_copy_number_segment/primary_tumor/metadata.csv", header = T)
+normal_metadata <- read.csv("../../data/SNP6/masked_copy_number_segment/normals/metadata.csv", header = T)
+
+# convert file identifiers to TCGA identifiers
+tumor_segs$submitter_id <- tumor_metadata[match(tumor_segs$GDC_Aliquot, tumor_metadata$entity_id), "entity_submitter_id"]
+normal_segs$submitter_id <- normal_metadata[match(normal_segs$GDC_Aliquot, normal_metadata$entity_id), "entity_submitter_id"]
+```
+
+```{r}
+# do the identifiers match
+length(unique(tumor_segs$filename))
+length(unique(tumor_metadata$entity_submitter_id))
+```
+
+```{r}
+# Calculate unfiltered breakpoints for tumor and normal data
+tumor_bps <- calculate_breakpoints(tumor_segs)
+normal_bps <- calculate_breakpoints(normal_segs)
+
+# Visualize distribution of smallest adjacent segment size vs the break size
+tdf <- data.frame(tumor_bps$smallest_adjacent_segment,
+                   tumor_bps$break_size)
+ndf <- data.frame(normal_bps$smallest_adjacent_segment,
+                  normal_bps$break_size)
+
+# rename columns
+colnames(tdf) <- c('sas','bs')
+colnames(ndf) <- c('sas','bs')
+
+# set colorpalette for density plot
+rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
+r <- rf(32)
+
+# Default call (as object), density plots
+tp <- ggplot(tdf, aes(sas,bs))
+np <- ggplot(ndf, aes(sas,bs))
+
+th <- tp + stat_bin2d(bins=100) + scale_fill_gradientn(colours=r, trans="log", breaks = c(1, 100, 1000)) + 
+  scale_x_continuous(trans='log10', limits = c(1, 100000)) +
+  scale_y_continuous(trans='log10', limits = c(0.01, 10)) +
+  xlab('Smallest adjacent segment (SAS)') +
+  ylab('Break size (BrS)') +
+  ggtitle("Tumor") + theme_prism(base_size = 20) 
+  #theme_classic(base_size = 25) + theme(plot.title = element_text(hjust = 0.5, size=30))
+  
+nh <- np + stat_bin2d(bins=100) + scale_fill_gradientn(colours=r, trans="log", breaks = c(1, 100, 1000)) + 
+  scale_x_continuous(trans='log10', limits = c(1, 100000)) +
+  scale_y_continuous(trans='log10', limits = c(0.01, 10)) +
+  xlab('Smallest adjacent segment (SAS)') +
+  ylab('Break size (BrS)') +
+  ggtitle("Normal") + theme_prism(base_size = 20)
+  #theme_classic(base_size = 25) + theme(plot.title = element_text(hjust = 0.5, size=30))
+
+png(paste(outputdirTumor, "/bp_heatmap_masked_TvsN.png", sep = ""), width = 960)
+grid.arrange(nh, th, ncol=2)
+dev.off()
+pdf(paste(outputdirTumor, "/bp_heatmap_masked_TvsN.pdf", sep = ""), width = 15)
+grid.arrange(nh, th, ncol=2)
+dev.off()
+
+# plot filter lines
+thh <- th + geom_hline(yintercept = 0.135, linetype = "dashed", color = "black", size = 1.5) + geom_vline(xintercept = 20, linetype = "dashed", color = "black", size = 1.5) #+
+  #geom_hline(yintercept = 0.3, linetype = "dashed", color = "blue") 
+nhh <- nh + geom_hline(yintercept = 0.135, linetype = "dashed", color = "black", size = 1.5) + geom_vline(xintercept = 20, linetype = "dashed", color = "black", size = 1.5) #+
+  #geom_hline(yintercept = 0.3, linetype = "dashed", color = "blue") 
+
+png(paste(outputdirTumor, "/bp_heatmap_masked_TvsN_filterLines.png", sep = ""), width = 960)
+grid.arrange(nhh, thh, ncol=2)
+dev.off()
+pdf(paste(outputdirTumor, "/bp_heatmap_masked_TvsN_filterLines.pdf", sep = ""), width = 15)
+grid.arrange(nhh, thh, ncol=2)
+dev.off()
+
+png(paste(outputdirTumor, "/bp_heatmap_masked_TvsN_filterLines_Hor.png", sep = ""), height = 1100, width = 700)
+grid.arrange(nhh, thh, nrow=2)
+dev.off()
+pdf(paste(outputdirTumor, "/bp_heatmap_masked_TvsN_filterLines_Hor.pdf", sep = ""), height = 15)
+grid.arrange(nhh, thh, nrow=2)
+dev.off()
+```
+
+```{r}
+# calculate the tumor break load before filtering
+unfiltered_tumor_bp_count <- bp_counting(tumor_bps)
+unfiltered_normal_bp_count <- bp_counting(normal_bps)
+```
+
+```{r}
+# Tumor break load distribution
+png(paste(outputdirTumor, "/unfiltered_tbl_dist.png", sep = ""), width = 960)
+ggplot(unfiltered_tumor_bp_count, aes(x=count)) + 
+  geom_histogram(aes(y=..density..), binwidth = 15, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="#31a354") + xlab("Tumor Break Load (TBL)") + 
+  scale_x_continuous(expand = c(0,0)) + scale_y_continuous(expand = c(0,0)) +
+  theme_prism(base_size = 16)
+dev.off()
+
+# Normal break load distribution
+png(paste(outputdirNormal, "/unfiltered_nbl_dist.png", sep = ""), width = 960)
+ggplot(unfiltered_normal_bp_count, aes(x=count)) + 
+  geom_histogram(aes(y=..density..), binwidth = 15, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="#31a354") + xlab("Normal Break Load (NBL)") + 
+  scale_x_continuous(expand = c(0,0)) + scale_y_continuous(expand = c(0,0)) +
+  theme_prism(base_size = 16)
+dev.off()
+```
+
+```{r}
+# write unfiltered data
+write.csv(tumor_bps, "../../results/SNP6/masked_copy_number_segment/primary_tumor/unfiltered_tumor_breakpoint_data.csv")
+```
+
+```{r}
+# filter tumor break points based on hard thresholds on the break size and size of adjacent segments
+bs_thres <- 0.135
+sas_thres <- 20
+
+filterd_tumor_bp <- tumor_bps[which(tumor_bps$break_size >= bs_thres & tumor_bps$smallest_adjacent_segment >= sas_thres),]
+write.csv(filterd_tumor_bp, "../../results/SNP6/masked_copy_number_segment/primary_tumor/filterd_tumor_breakpoint_data.csv")
+```
+
+```{r}
+# extend with samples with no breaks
+filtered_tumor_bp_count <- bp_counting(filterd_tumor_bp, 
+                                       no_bp_sample = setdiff(tumor_bps$sample, filterd_tumor_bp$sample))
+
+# Tumor break load distribution
+png(paste(outputdirTumor, "/filtered_tbl_dist.png", sep = ""), width = 960)
+ggplot(filtered_tumor_bp_count, aes(x=count)) + 
+  geom_histogram(aes(y=..density..), binwidth = 5, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="#31a354") + xlab("Tumor Break Load (TBL)") + 
+  scale_x_continuous(expand = c(0,0)) + scale_y_continuous(expand = c(0,0)) +
+  theme_prism(base_size = 16)
+dev.off()
+```
+
+```{r, fig.width=12, fig.height=4}
+# write the filtered normal calls
+filterd_normal_bp <- normal_bps[which(normal_bps$break_size >= bs_thres & normal_bps$smallest_adjacent_segment >= sas_thres),]
+write.csv(filterd_normal_bp, "../../results/SNP6/masked_copy_number_segment/normals/filterd_normals_breakpoint_data.csv")
+```
+
+```{r}
+# calculate TBL for normal samples
+filtered_normal_bp_count <- bp_counting(filterd_normal_bp, 
+                                       no_bp_sample = setdiff(normal_bps$sample, filterd_normal_bp$sample))
+
+# Tumor break load distribution
+png(paste(outputdirNormal, "/filtered_nbl_dist.png", sep = ""), width = 960)
+ggplot(filtered_normal_bp_count, aes(x=count)) + 
+  geom_histogram(aes(y=..density..), binwidth = 5, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="#31a354") + xlab("Normal Break Load (NBL)") +
+  scale_x_continuous(expand = c(0,0)) + scale_y_continuous(expand = c(0,0)) +
+  theme_prism(base_size = 16)
+dev.off()
+```
+
+
+```{r}
+# plot percentage of filtered and unfiltered data
+num_bp <- data.frame(types = c("tumor", "normal", "filtered tumor", "filtered normal"), 
+                     bp_count = c(nrow(tumor_bps), nrow(normal_bps), nrow(filterd_tumor_bp), nrow(filterd_normal_bp)))
+num_bp$types <- factor(num_bp$types, levels = c("tumor", "filtered tumor", "normal", "filtered normal"))
+png(paste(outputdirTumor, "/bp_count_after_filter.png", sep=""))
+ggplot(num_bp, aes(x=types, weight=bp_count)) + geom_bar() + xlab("") + ylab("BP count") + theme_prism(base_size = 16)
+dev.off()
+```
+
+```{r}
+# visualize the percentage filtered and unfiltered as a stack bar plot
+total_unfilt <- nrow(tumor_bps) + nrow(normal_bps)
+total_filt <- nrow(filterd_tumor_bp) + nrow(filterd_normal_bp)
+num_bp <- data.frame(state = c("unfiltered", "unfiltered", "filtered", "filtered"), types = c("tumor", "normal", "tumor", "normal"), 
+                     bp_count = c(nrow(tumor_bps)/total_unfilt, nrow(normal_bps)/total_unfilt, 
+                                  nrow(filterd_tumor_bp)/total_filt, nrow(filterd_normal_bp)/total_filt))
+num_bp$types <- factor(num_bp$types, levels = c("tumor", "normal"))
+num_bp$state <- factor(num_bp$state, levels = c("unfiltered", "filtered"))
+png(paste(outputdirTumor, "/bp_fraction_after_filter.png", sep=""))
+ggplot(num_bp, aes(x=state, y=bp_count, fill = types)) + geom_bar(position = "stack", stat = "identity") + xlab("") + ylab("BP fraction") + theme_prism(base_size = 16)
+dev.off()
+```

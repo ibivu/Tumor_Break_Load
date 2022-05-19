@@ -1,0 +1,148 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+# libraries
+library(readxl)
+library(fmsb)
+library(tidyverse)
+library(ggprism)
+```
+
+```{r}
+# read curated pathway alteration info (Sanchez-Vega,F. et al. (2018) Oncogenic Signaling Pathways in The Cancer Genome Atlas. Cell, 173, 321-337.e10.)
+pathway_info <- read_excel("../../data/1-s2.0-S0092867418303593-mmc4.xlsx", sheet = "Pathway level", na = c("NA"))
+
+# read genomic info data
+genomic_metrics <- read.csv("../../results/sample_genome_metrics_tbl_class_all.csv", header = T, row.names = 1)
+
+# match sample ids
+genomic_metrics$sample_barcode <- gsub('.{1}$', '', genomic_metrics$sample_ids)
+
+# annotate MSI and pole as one variable
+genomic_metrics$msi_pole <- as.character(genomic_metrics$msi_status)
+genomic_metrics[which(genomic_metrics$msi_pole %in% c("MSI-L", "Indeterminate")), "msi_pole"] <- "MSS"
+genomic_metrics[is.na(genomic_metrics$msi_pole), "msi_pole"] <- "-"
+genomic_metrics[which((genomic_metrics$POLE_mut == T | genomic_metrics$POLD1_mut == T) & 
+                        genomic_metrics$msi_pole != "MSI-H"), "msi_pole"] <- "POLE/D1"
+genomic_metrics$msi_pole <- as.factor(genomic_metrics$msi_pole)
+
+genomic_filtered <- genomic_metrics[genomic_metrics$msi_pole == "MSS" & genomic_metrics$TBL_prediction != "-",]
+rownames(genomic_filtered) <- genomic_filtered$sample_barcode
+
+# select only MSS CRC samples
+pathway_info <- pathway_info[pathway_info$SAMPLE_BARCODE %in% genomic_filtered$sample_barcode,]
+```
+
+```{r}
+# summarise the pathway_info to have a single row with the sum
+plot_data <- pathway_info %>% column_to_rownames("SAMPLE_BARCODE")
+plot_data$TBL_status <- genomic_filtered[rownames(plot_data), "TBL_prediction"]
+
+plot_data <- plot_data %>% group_by(TBL_status) %>% summarise_all(funs(sum(., na.rm = T))) %>% column_to_rownames("TBL_status")
+plot_data <- as.data.frame(plot_data)
+
+# determine group size
+group_size <- table(genomic_filtered[pathway_info$SAMPLE_BARCODE, "TBL_prediction"])
+
+# normalize data
+plot_data <- plot_data/group_size * 100
+
+plot_data <- rbind(rep(100,dim(plot_data)[2]) , rep(0,dim(plot_data)[2]), plot_data)
+
+plot_data <- plot_data[c(1,2,4,3),]
+
+# Color vector
+colors_border=c( rgb(85,197,204,230, maxColorValue = 255), rgb(246,147,139,230, maxColorValue = 255))
+colors_in=c(rgb(85,197,204,130, maxColorValue = 255), rgb(246,147,139, 130, maxColorValue = 255))
+
+# plot with default options:
+radarchart( plot_data  , axistype=1 , 
+    #custom polygon
+    pcol=colors_border , pfcol=colors_in , plwd=4 , plty=1,
+    #custom the grid
+    cglcol="grey", cglty=2, axislabcol="darkgrey", caxislabels=seq(0,100,25), cglwd=0.8,
+    #custom labels
+    vlcex=1.0
+    )
+```
+
+```{r}
+# fishers test to assess if the frequency is higher in one of the groups (TODO)
+plot_data <- pathway_info %>% column_to_rownames("SAMPLE_BARCODE")
+plot_data$TBL_status <- genomic_filtered[rownames(plot_data), "TBL_prediction"]
+
+plot_data <- plot_data %>% group_by(TBL_status) %>% summarise_all(funs(sum(., na.rm = T))) %>% column_to_rownames("TBL_status")
+plot_data <- as.data.frame(plot_data)
+plot_data$max <- group_size
+
+pvalues <- data.frame(row.names = colnames(plot_data)[-11], pvalues = rep(Inf,10))
+
+for (pathway in colnames(plot_data)[-11]) {
+  test_data = matrix(c( plot_data[,pathway], plot_data$max - plot_data[,pathway]), 
+                    nrow = 2, 
+                    dimnames = list(TBL = c("High", "Low"),
+                                    Pathway = c(pathway, "Not")))
+  fshtest = fisher.test(test_data)
+  pvalues[pathway,"pvalues"] = fshtest$p.value  
+}
+
+pvalues$padjust <- p.adjust(pvalues$pvalues, method = "fdr")
+pvalues$signif <- pvalues$padjust <= 0.05
+pvalues
+```
+
+```{r}
+# summarise the pathway_info to have a single row with the sum
+plot_data <- pathway_info %>% column_to_rownames("SAMPLE_BARCODE")
+plot_data$TBL_status <- genomic_filtered[rownames(plot_data), "TBL_prediction"]
+
+plot_data <- plot_data %>% group_by(TBL_status) %>% summarise_all(funs(sum(., na.rm = T))) %>% column_to_rownames("TBL_status")
+plot_data <- as.data.frame(plot_data)
+
+# determine group size
+group_size <- table(genomic_filtered[pathway_info$SAMPLE_BARCODE, "TBL_prediction"])
+
+# normalize data
+plot_data <- plot_data/group_size * 100
+
+plot_data <- rbind(rep(100,dim(plot_data)[2]) , rep(0,dim(plot_data)[2]), plot_data)
+
+plot_data <- plot_data[c(1,2,4,3),]
+
+# indicate significance to the col names
+colnames(plot_data) <- c("Cell Cycle", "HIPPO", "MYC", "NOTCH", "NRF2", "PI3K*", "RTK RAS*", "TP53*", "TGF-Beta*", "WNT")
+
+# Color vector
+colors_border=c( rgb(85,197,204,230, maxColorValue = 255), rgb(246,147,139,230, maxColorValue = 255))
+colors_in=c(rgb(85,197,204,130, maxColorValue = 255), rgb(246,147,139, 130, maxColorValue = 255))
+
+# plot with default options:
+png("../../results/Predicted_TBL_curated_pathway_association.png")
+radarchart( plot_data  , axistype=1 , 
+    #custom polygon
+    pcol=colors_border , pfcol=colors_in , plwd=3 , plty=1,
+    #custom the grid
+    cglcol="grey", cglty=2, axislabcol="darkgrey", caxislabels=seq(0,100,25), cglwd=1.9,
+    #custom labels
+    vlcex=1.2
+    )
+
+dev.off()
+```
+```{r}
+pdf("../../results/Predicted_TBL_curated_pathway_association.pdf")
+radarchart( plot_data  , axistype=1 , 
+    #custom polygon
+    pcol=colors_border , pfcol=colors_in , plwd=3 , plty=1,
+    #custom the grid
+    cglcol="grey", cglty=2, axislabcol="darkgrey", caxislabels=seq(0,100,25), cglwd=1.9,
+    #custom labels
+    vlcex=1.4, 
+    font = 2
+    )
+
+dev.off()
+```

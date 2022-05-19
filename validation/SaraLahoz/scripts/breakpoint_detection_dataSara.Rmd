@@ -1,0 +1,206 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+# libaries
+source("cnd_functions.R")
+library(RColorBrewer)
+library(ggplot2)
+```
+
+```{r}
+# Read segmentation data
+segment_data <- read.table("../data/1_Clinic_segments_raw_84samples_SaraLahoz.txt", sep = "\t", header = T)
+
+# merge segments with 0 difference in copy number
+nr_segments <- dim(segment_data)[1]
+i = 1
+while (i != nr_segments-1) {
+  #print(i)
+  merge_segment = NULL
+  segment_A <- segment_data[i,]
+  segment_B <- segment_data[i+1,]
+  
+  bs <- segment_B$mean_logR - segment_A$mean_logR
+  
+  if (bs == 0 & !is.na(bs)) { # if segments have the same copy number
+    if (segment_A$Sample == segment_B$Sample) { # segments should be from the same sample
+      if (segment_A$Chromosome == segment_B$Chromosome) { # segments are from the same chromosome
+          merge_segment = data.frame(Sample = segment_A$Sample, 
+                                   Chromosome = segment_A$Chromosome,
+                                   Start = segment_A$Start,
+                                   End = segment_B$End,
+                                   mean_logR = segment_A$mean_logR)
+          # replace segment A with the longer merged segment
+          segment_data[i,] <- merge_segment
+          # remove segment B
+          segment_data <- segment_data[-(i+1),]
+      }
+    }
+  }
+  
+  if (is.null(merge_segment)) {
+    i = i + 1
+  }
+}
+```
+
+```{r}
+# determine segment size
+segment_data$segment_size <- segment_data$End - segment_data$Start
+
+# rename columns
+colnames(segment_data) <- c("ID", "Chromosome", "Start", "End", "Mean", "Num_Markers")
+
+# determine breaks
+breakpoints <- calculate_breakpoints(segment_data)
+
+outputDir <- "../results/"
+dir.create(outputDir)
+write.csv(breakpoints, paste(outputDir, "breakpoints_SaraL_data.csv", sep=""))
+summary(breakpoints)
+```
+
+```{r}
+# Visualize distribution of smallest adjacent segment size vs the break size
+tdf <- data.frame(breakpoints$smallest_adjacent_segment,
+                   breakpoints$break_size)
+
+colnames(tdf) <- c('sas','bs')
+
+rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
+r <- rf(32)
+
+# Default call (as object)
+tp <- ggplot(tdf, aes(sas,bs))
+
+th <- tp + stat_bin2d(bins=100) + scale_fill_gradientn(colours=r, trans="log", breaks = c(1, 100, 1000)) + 
+  scale_x_continuous(trans='log10', limits = c(10000, 110000000)) +
+  scale_y_continuous(trans='log10', limits = c(0.000001, 10)) +
+  xlab('Smallest adjacent segment') +
+  ylab('Break size') +
+  ggtitle("Tumor") + 
+  theme_classic(base_size = 10) + theme(plot.title = element_text(hjust = 0.5, size=22))
+
+th
+
+thh <- th + geom_hline(yintercept = 0.10, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 2e06, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 1e05, linetype = "dashed", color = "red")
+
+thh
+
+png(paste(outputDir, "breakpoints_stats_SaraL_data.png", sep=""))
+thh
+dev.off()
+```
+
+```{r}
+# calculate the breakload without a BS filter
+raw_tbl <- bp_counting(breakpoints)
+
+write.csv(raw_tbl, paste(outputDir, "tbl_Sara_data.csv", sep=""))
+
+hotspot_bp <- breakpoints[breakpoints$break_size > 0.1 & breakpoints$smallest_adjacent_segment < 2e06 & 
+                            breakpoints$smallest_adjacent_segment > 1e05,]
+
+# calculate the breakload with a BS filter of 0.1
+filt_bp <- breakpoints[breakpoints$break_size > 0.1,]
+filt_tbl <- bp_counting(filt_bp)
+samp_diff <- setdiff(raw_tbl$sample, filt_tbl$sample)
+filt_tbl <- rbind(filt_tbl, data_frame(sample = samp_diff, count = rep(0, length(samp_diff))))
+write.csv(filt_tbl, paste(outputDir, "tbl_filt_bs_0.1_SaraL.csv", sep=""))
+
+# calculate the breakload with a BS filter of 0.1 and a SAS filter of 3e06
+full_filt_bp <- breakpoints[breakpoints$break_size > 0.1 & breakpoints$smallest_adjacent_segment > 2e06,]
+full_filt_tbl <- bp_counting(full_filt_bp)
+samp_diff <- setdiff(raw_tbl$sample, full_filt_tbl$sample)
+full_filt_tbl <- rbind(full_filt_tbl, data_frame(sample = samp_diff, count = rep(0, length(samp_diff))))
+write.csv(full_filt_tbl, paste(outputDir, "tbl_filt_bs_0.1_SAS_3e6_SaraL.csv", sep=""))
+
+# calculate the breakload with a BS filter of 0.1 and a SAS filter of 3e06
+early_filt_bp <- breakpoints[breakpoints$break_size > 0.1 & breakpoints$smallest_adjacent_segment > 1e05,]
+early_filt_tbl <- bp_counting(early_filt_bp)
+samp_diff <- setdiff(raw_tbl$sample, early_filt_tbl$sample)
+early_filt_tbl <- rbind(early_filt_tbl, data_frame(sample = samp_diff, count = rep(0, length(samp_diff))))
+write.csv(early_filt_tbl, paste(outputDir, "tbl_filt_bs_0.1_SAS_1e5_SaraL.csv", sep=""))
+```
+
+```{r}
+# plot distribution of the unfiltered and filtered TBL
+pl <- ggplot(raw_tbl, aes(x=count)) + 
+  geom_histogram(aes(y=..density..), binwidth = 50, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="#31a354") + xlab("Unfiltered Tumor Break Load (TBL)") + theme_minimal()
+pl
+png(paste(outputDir, "TBL_dist_SaraLdata.png"))
+pl
+dev.off()
+
+pl <- ggplot(filt_tbl, aes(x=count)) + 
+  geom_histogram(aes(y=..density..), binwidth = 50, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="#31a354") + xlab("filtered Tumor Break Load (TBL)") + theme_minimal()
+pl
+png(paste(outputDir, "TBL_filt_dist_SaraLdata.png"))
+pl
+dev.off()
+pl <- ggplot(full_filt_tbl, aes(x=count)) + 
+  geom_histogram(aes(y=..density..), binwidth = 2, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="#31a354") + xlab("full filtered Tumor Break Load (TBL)") + theme_minimal()
+pl
+png(paste(outputDir, "TBL_full_filt_dist_reseg_SaraL.png"))
+pl
+dev.off()
+
+pl <- ggplot(early_filt_tbl, aes(x=count)) + 
+  geom_histogram(aes(y=..density..), binwidth = 25, colour="black", fill="#bdbdbd") +
+  geom_density(alpha=.2, fill="#31a354") + xlab("early filtered Tumor Break Load (TBL)") + theme_minimal()
+pl
+png(paste(outputDir, "TBL_early_filt_dist_reseg_SaraL.png"))
+pl
+dev.off()
+```
+```{r}
+# rank TBL samples with different filtering aproaches
+tbl <- data.frame(samples = raw_tbl$sample, noFilt = rank(-raw_tbl$count, ties.method = "first"))
+tbl$BSfilt <- rank(-filt_tbl[match(raw_tbl$sample, filt_tbl$sample),]$count, ties.method = "first")
+tbl$early_SAS_BSfilt <- rank(-early_filt_tbl[match(raw_tbl$sample, early_filt_tbl$sample),]$count, ties.method = "first")
+tbl$SAS_BSfilt <- rank(-full_filt_tbl[match(raw_tbl$sample, full_filt_tbl$sample),]$count, ties.method = "first")
+```
+
+```{r}
+library(GGally)
+library(viridis)
+
+ggparcoord(tbl, columns = 2:5, showPoints = T, scale = "uniminmax", 
+           title = "TBL ranking SaraL data") + theme_minimal() + 
+  xlab("filters") + ylab("ranking")
+```
+
+```{r}
+# read MSI status samples
+metadata <- read.table("../data/3_Clinic_MSI-Status_SaraLahoz.txt", header = T)
+msi_ids <- metadata[metadata$Microsatellites_Status == "msi",]$Sample
+```
+
+```{r}
+tbl <- as.data.frame(raw_tbl)
+tbl$TBLfilt1 <- filt_tbl[match(raw_tbl$sample, filt_tbl$sample),]$count
+tbl$TBLfilt2 <- early_filt_tbl[match(raw_tbl$sample, early_filt_tbl$sample),]$count
+tbl$TBLfilt3 <- full_filt_tbl[match(raw_tbl$sample, full_filt_tbl$sample),]$count
+colnames(tbl) <- c("sample", "TBLnoFilt", "TBLfilt1", "TBLfilt2", "TBLfilt3")
+```
+
+```{r}
+tbl_mss <- tbl[!(tbl$sample %in% msi_ids),]
+tbl_msi <- tbl[(tbl$sample %in% msi_ids),]
+summary(tbl_mss)
+summary(tbl_msi)
+```
+
+```{r}
+write.csv(tbl, "../results/TBL_all_Lahoz_Camps_data.csv")
+write.csv(tbl_mss, "../results/TBL_MSS_Lahoz_Camps_data.csv")
+```
+
