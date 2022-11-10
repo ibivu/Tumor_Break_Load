@@ -30,7 +30,7 @@ The code provided in this repository describes three aspects introduced in the p
   
 run_project.sh will run the whole analysis workflow to reproduce the results presented in the paper.
 
-Data and results files can be retrieved from codeocean (https://codeocean.com/capsule/8494725/tree) including the model files.
+Data and results files can be retrieved from codeocean (https://codeocean.com/capsule/1605813/tree) including the model files.
 
 # Requirements
 With TBL_Dockerfile.dockerfile the required environment to run the current workflow can be recreated.
